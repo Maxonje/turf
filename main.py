@@ -8,6 +8,9 @@ import psycopg2
 from flask import Flask
 from threading import Thread
 
+# Version för att se att rätt script körs
+SCRIPT_VERSION = "v2.0 - embeds & commands"
+
 # ===== Flask keep-alive (Replit) =====
 app = Flask('')
 
@@ -63,6 +66,7 @@ TOKEN = os.environ["TOKEN"]
 ROBLOX_COOKIE = os.environ["ROBLOX_SECURITY"]
 ROBLOX_GROUP_ID = os.environ["ROBLOX_GROUP_ID"]
 ALLOWED_ROLE_ID = int(os.environ["ALLOWED_ROLE_ID"])
+LOG_CHANNEL_ID = int(os.environ.get("LOG_CHANNEL_ID", 0))
 
 # ===== Discord bot setup =====
 intents = discord.Intents.default()
@@ -159,11 +163,19 @@ def has_allowed_role(ctx):
 # ===== Events =====
 @bot.event
 async def on_ready():
-    print(f"Logged in as {bot.user}")
+    print("===================================")
+    print(f"🚀 Bot started! Running script version: {SCRIPT_VERSION}")
+    print(f"Logged in as {bot.user} (ID: {bot.user.id})")
     if check_roblox_login():
         print("✅ Roblox cookie works!")
     else:
         print("❌ Roblox cookie is invalid!")
+    print("===================================")
+
+    if LOG_CHANNEL_ID:
+        channel = bot.get_channel(LOG_CHANNEL_ID)
+        if channel:
+            await channel.send(f"Bot restarted and is now running `{SCRIPT_VERSION}`")
 
 # ===== Commands with embeds =====
 def embed_message(title, description, color):
@@ -288,7 +300,7 @@ async def demote(ctx, username: str):
         await ctx.send(embed=embed_message("Error", "Failed to demote user.", discord.Color.red()))
 
 @bot.command()
-async def rank(ctx, username: str, *, rank: str):
+async def rank(ctx, username: str, rank: int):
     if not has_allowed_role(ctx):
         await ctx.send(embed=embed_message("Permission Denied", "Du har inte behörighet.", discord.Color.red()))
         return
@@ -297,29 +309,28 @@ async def rank(ctx, username: str, *, rank: str):
         await ctx.send(embed=embed_message("Error", "User not found.", discord.Color.red()))
         return
     roles = get_group_roles()
-    role_match = next((r for r in roles if r["name"].lower() == rank.lower()), None)
-    if not role_match:
-        await ctx.send(embed=embed_message("Error", f"Rank '{rank}' not found.", discord.Color.red()))
-        return
-    if set_user_role(user_id, role_match["id"]):
-        await ctx.send(embed=embed_message("Success", f"{username} has been set to rank {rank}.", discord.Color.green()))
-    else:
-        await ctx.send(embed=embed_message("Error", "Failed to set rank.", discord.Color.red()))
+    for r in roles:
+        if r["rank"] == rank:
+            if set_user_role(user_id, r["id"]):
+                await ctx.send(embed=embed_message("Success", f"{username} has been set to rank {rank}.", discord.Color.green()))
+                return
+    await ctx.send(embed=embed_message("Error", "Rank not found.", discord.Color.red()))
 
 @bot.command()
 async def memberinfo(ctx, username: str):
-    if not has_allowed_role(ctx):
-        await ctx.send(embed=embed_message("Permission Denied", "Du har inte behörighet.", discord.Color.red()))
-        return
     user_id = get_user_id(username)
     if not user_id:
         await ctx.send(embed=embed_message("Error", "User not found.", discord.Color.red()))
         return
     role = get_user_role_in_group(user_id)
-    if not role:
-        await ctx.send(embed=embed_message("Info", f"{username} is not in the group.", discord.Color.blue()))
-        return
-    await ctx.send(embed=embed_message("Member Info", f"{username} has the role {role['name']} (Rank {role['rank']}).", discord.Color.blue()))
+    rank = role["rank"] if role else "N/A"
+    role_name = role["name"] if role else "N/A"
+    embed = discord.Embed(title=f"Info för {username}", color=discord.Color.blue())
+    embed.add_field(name="Rank", value=rank, inline=True)
+    embed.add_field(name="Role", value=role_name, inline=True)
+    await ctx.send(embed=embed)
 
-bot.loop.create_task(keep_alive())
-bot.run(TOKEN)
+# ===== Main =====
+if __name__ == "__main__":
+    keep_alive()
+    bot.run(TOKEN)
