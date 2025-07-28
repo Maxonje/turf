@@ -261,6 +261,7 @@ async def cmds(interaction: discord.Interaction):
 @tree.command(name="key", description="Accept user into Roblox group with key")
 @app_commands.describe(key="The key to use", username="Roblox username")
 async def key(interaction: discord.Interaction, key: str, username: str):
+    # Detta kommando tillåter även icke-roller (alla kan använda key för att ansöka)
     key_status = key_exists(key)
     if key_status is None:
         await interaction.response.send_message("Invalid key.", ephemeral=True)
@@ -329,25 +330,21 @@ async def rank(interaction: discord.Interaction, username: str, rank: str):
     if not has_allowed_role(interaction):
         await interaction.response.send_message("Du har inte behörighet att använda detta kommando.", ephemeral=True)
         return
-    roles = get_group_roles()
-    target_role = None
-    for r in roles:
-        if r["name"].lower() == rank.lower():
-            target_role = r
-            break
-    if target_role is None:
-        await interaction.response.send_message(f"Rank '{rank}' not found.", ephemeral=True)
-        return
     user_id = get_user_id(username)
     if not user_id:
         await interaction.response.send_message("User not found.", ephemeral=True)
         return
-    if set_user_role(user_id, target_role["id"]):
-        await interaction.response.send_message(f"User {username} rank set to {rank}.", ephemeral=False)
+    roles = get_group_roles()
+    role_match = next((r for r in roles if r["name"].lower() == rank.lower()), None)
+    if not role_match:
+        await interaction.response.send_message(f"Rank '{rank}' not found.", ephemeral=True)
+        return
+    if set_user_role(user_id, role_match["id"]):
+        await interaction.response.send_message(f"User {username} has been set to rank {rank}.", ephemeral=False)
     else:
         await interaction.response.send_message("Failed to set rank.", ephemeral=True)
 
-@tree.command(name="memberinfo", description="Get Roblox group member info")
+@tree.command(name="memberinfo", description="Show Roblox user group info")
 @app_commands.describe(username="Roblox username")
 async def memberinfo(interaction: discord.Interaction, username: str):
     if not has_allowed_role(interaction):
@@ -358,11 +355,10 @@ async def memberinfo(interaction: discord.Interaction, username: str):
         await interaction.response.send_message("User not found.", ephemeral=True)
         return
     role = get_user_role_in_group(user_id)
-    if role:
-        await interaction.response.send_message(f"User {username} has the rank: {role['name']}", ephemeral=False)
-    else:
-        await interaction.response.send_message("User is not in the group.", ephemeral=True)
+    if not role:
+        await interaction.response.send_message(f"{username} is not a member of the group.", ephemeral=True)
+        return
+    await interaction.response.send_message(f"{username} has the role: {role['name']} (Rank {role['rank']}).", ephemeral=False)
 
-# ===== Run =====
-keep_alive()
+bot.loop.create_task(keep_alive())
 bot.run(TOKEN)
