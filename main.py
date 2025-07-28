@@ -6,6 +6,8 @@ import string
 import os
 import json
 import requests
+import psycopg2
+from urllib.parse import urlparse
 from flask import Flask
 from threading import Thread
 
@@ -23,18 +25,54 @@ def keep_alive():
     t = Thread(target=run)
     t.start()
 
-# ===== Configuration =====
-KEYS_FILE = "keys.json"
+# ===== PostgreSQL setup =====
+DATABASE_URL = os.environ["DATABASE_URL"]
+conn = psycopg2.connect(DATABASE_URL, sslmode='require')
+cur = conn.cursor()
+
+# Skapa table om den inte finns
+cur.execute("""
+CREATE TABLE IF NOT EXISTS keys (
+    key TEXT PRIMARY KEY,
+    used BOOLEAN DEFAULT FALSE
+);
+""")
+conn.commit()
 
 def load_keys():
-    if not os.path.isfile(KEYS_FILE):
-        return {}
-    with open(KEYS_FILE, "r") as f:
-        return json.load(f)
+    cur.execute("SELECT key, used FROM keys;")
+    rows = cur.fetchall()
+    return {row[0]: row[1] for row in rows}
 
-def save_keys(keys):
-    with open(KEYS_FILE, "w") as f:
-        json.dump(keys, f, indent=4)
+def save_keys(keys_dict):
+    # Rensar och sparar alla keys (inte effektiv, men samma logik som filen)
+    cur.execute("DELETE FROM keys;")
+    for k, used in keys_dict.items():
+        cur.execute("INSERT INTO keys (key, used) VALUES (%s, %s)", (k, used))
+    conn.commit()
+
+def insert_key(new_key):
+    cur.execute("INSERT INTO keys (key, used) VALUES (%s, %s)", (new_key, False))
+    conn.commit()
+
+def set_key_used(key):
+    cur.execute("UPDATE keys SET used = TRUE WHERE key = %s;", (key,))
+    conn.commit()
+
+def wipe_all_keys():
+    cur.execute("DELETE FROM keys;")
+    conn.commit()
+
+def get_active_keys():
+    cur.execute("SELECT key FROM keys WHERE used = FALSE;")
+    return [row[0] for row in cur.fetchall()]
+
+def key_exists(key):
+    cur.execute("SELECT used FROM keys WHERE key = %s;", (key,))
+    row = cur.fetchone()
+    if row is None:
+        return None
+    return row[0]
 
 # Ladda keys vid start
 keys = load_keys()
@@ -156,15 +194,13 @@ async def generatekey(interaction: discord.Interaction, amount: int):
     if not has_allowed_role(interaction):
         await interaction.response.send_message("You do not have permission to use this command.", ephemeral=True)
         return
-    global keys
     new_keys = []
     for _ in range(amount):
         new_key = generate_key()
-        while new_key in keys:
+        while key_exists(new_key) is not None:
             new_key = generate_key()
-        keys[new_key] = False
+        insert_key(new_key)
         new_keys.append(new_key)
-    save_keys(keys)
     embed = discord.Embed(title="Generated keys", color=discord.Color.green())
     for k in new_keys:
         embed.add_field(name="Key", value=f"```{k}```", inline=False)
@@ -176,9 +212,7 @@ async def wipekeys(interaction: discord.Interaction):
     if not has_allowed_role(interaction):
         await interaction.response.send_message("You do not have permission to use this command.", ephemeral=True)
         return
-    global keys
-    keys = {}
-    save_keys(keys)
+    wipe_all_keys()
     await interaction.response.send_message("All keys have been wiped!", ephemeral=True)
 
 @tree.command(name="activekeys", description="Show active keys")
@@ -186,7 +220,7 @@ async def activekeys(interaction: discord.Interaction):
     if not has_allowed_role(interaction):
         await interaction.response.send_message("You do not have permission to use this command.", ephemeral=True)
         return
-    active = [k for k, v in keys.items() if not v]
+    active = get_active_keys()
     if not active:
         await interaction.response.send_message("There are no active keys.", ephemeral=True)
     else:
@@ -214,11 +248,11 @@ async def cmds(interaction: discord.Interaction):
 @tree.command(name="key", description="Accept user into Roblox group with key")
 @app_commands.describe(key="The key to use", username="Roblox username")
 async def key(interaction: discord.Interaction, key: str, username: str):
-    global keys
-    if key not in keys:
+    key_status = key_exists(key)
+    if key_status is None:
         await interaction.response.send_message("Invalid key.", ephemeral=True)
         return
-    if keys[key]:
+    if key_status:
         await interaction.response.send_message("This key has already been used.", ephemeral=True)
         return
     user_id = get_user_id(username)
@@ -226,8 +260,7 @@ async def key(interaction: discord.Interaction, key: str, username: str):
         await interaction.response.send_message("The specified Roblox user was not found.", ephemeral=True)
         return
     if accept_group_request(user_id):
-        keys[key] = True
-        save_keys(keys)
+        set_key_used(key)
         await interaction.response.send_message(f"**{username}** has successfully been accepted into the group!", ephemeral=False)
     else:
         await interaction.response.send_message("Failed to accept the join request.", ephemeral=True)
