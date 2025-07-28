@@ -5,7 +5,6 @@ import string
 import os
 import requests
 import psycopg2
-from urllib.parse import urlparse
 from flask import Flask
 from threading import Thread
 
@@ -28,6 +27,7 @@ DATABASE_URL = os.environ["DATABASE_URL"]
 conn = psycopg2.connect(DATABASE_URL, sslmode='require')
 cur = conn.cursor()
 
+# Skapa tabell om den inte finns
 cur.execute("""
 CREATE TABLE IF NOT EXISTS keys (
     key TEXT PRIMARY KEY,
@@ -36,10 +36,12 @@ CREATE TABLE IF NOT EXISTS keys (
 """)
 conn.commit()
 
-def load_keys():
-    cur.execute("SELECT key, used FROM keys;")
-    rows = cur.fetchall()
-    return {row[0]: row[1] for row in rows}
+def key_exists(key):
+    cur.execute("SELECT used FROM keys WHERE key = %s;", (key,))
+    row = cur.fetchone()
+    if row is None:
+        return None
+    return row[0]
 
 def insert_key(new_key):
     cur.execute("INSERT INTO keys (key, used) VALUES (%s, %s)", (new_key, False))
@@ -57,15 +59,6 @@ def get_active_keys():
     cur.execute("SELECT key FROM keys WHERE used = FALSE;")
     return [row[0] for row in cur.fetchall()]
 
-def key_exists(key):
-    cur.execute("SELECT used FROM keys WHERE key = %s;", (key,))
-    row = cur.fetchone()
-    if row is None:
-        return None
-    return row[0]
-
-keys = load_keys()
-
 TOKEN = os.environ["TOKEN"]
 ROBLOX_COOKIE = os.environ["ROBLOX_SECURITY"]
 ROBLOX_GROUP_ID = os.environ["ROBLOX_GROUP_ID"]
@@ -75,10 +68,9 @@ ALLOWED_ROLE_ID = int(os.environ["ALLOWED_ROLE_ID"])
 intents = discord.Intents.default()
 intents.members = True
 intents.message_content = True
-intents.guilds = True
 bot = commands.Bot(command_prefix="!", intents=intents)
 
-# ===== Roblox API helper =====
+# ===== Roblox API helper functions =====
 def generate_key(length=16):
     chars = string.ascii_uppercase + string.digits
     return ''.join(random.choice(chars) for _ in range(length))
@@ -160,6 +152,7 @@ def check_roblox_login():
     resp = requests.post(url, headers=headers)
     return resp.status_code in [200, 403]
 
+# ===== Helper function =====
 def has_allowed_role(ctx):
     return any(r.id == ALLOWED_ROLE_ID for r in ctx.author.roles)
 
@@ -168,19 +161,18 @@ def has_allowed_role(ctx):
 async def on_ready():
     print(f"Logged in as {bot.user}")
     if check_roblox_login():
-        print("✅ Roblox cookie works and logged in!")
+        print("✅ Roblox cookie works!")
     else:
         print("❌ Roblox cookie is invalid!")
 
-# ===== Commands =====
-def embed_message(title, description, color=discord.Color.blue()):
-    embed = discord.Embed(title=title, description=description, color=color)
-    return embed
+# ===== Commands with embeds =====
+def embed_message(title, description, color):
+    return discord.Embed(title=title, description=description, color=color)
 
 @bot.command()
 async def generatekey(ctx, amount: int):
     if not has_allowed_role(ctx):
-        await ctx.reply(embed=embed_message("Error", "Du har inte behörighet."))
+        await ctx.send(embed=embed_message("Permission Denied", "Du har inte behörighet.", discord.Color.red()))
         return
     new_keys = []
     for _ in range(amount):
@@ -189,141 +181,145 @@ async def generatekey(ctx, amount: int):
             new_key = generate_key()
         insert_key(new_key)
         new_keys.append(new_key)
-    description = "\n".join([f"`{k}`" for k in new_keys])
-    await ctx.author.send(embed=embed_message("Generated keys", description, discord.Color.green()))
-    await ctx.reply(embed=embed_message("Done", "Keys har skickats till din DM.", discord.Color.green()))
+    embed = discord.Embed(title="Generated Keys", color=discord.Color.green())
+    for k in new_keys:
+        embed.add_field(name="Key", value=f"```{k}```", inline=False)
+    try:
+        await ctx.author.send(embed=embed)
+        await ctx.send(embed=embed_message("Done", "Keys have been sent to your DM!", discord.Color.green()))
+    except discord.Forbidden:
+        await ctx.send(embed=embed_message("Warning", "Couldn't DM you. Enable DMs!", discord.Color.red()))
 
 @bot.command()
 async def wipekeys(ctx):
     if not has_allowed_role(ctx):
-        await ctx.reply(embed=embed_message("Error", "Du har inte behörighet."))
+        await ctx.send(embed=embed_message("Permission Denied", "Du har inte behörighet.", discord.Color.red()))
         return
     wipe_all_keys()
-    await ctx.reply(embed=embed_message("Wiped", "Alla keys har raderats.", discord.Color.red()))
+    await ctx.send(embed=embed_message("Success", "All keys have been wiped!", discord.Color.green()))
 
 @bot.command()
 async def activekeys(ctx):
     if not has_allowed_role(ctx):
-        await ctx.reply(embed=embed_message("Error", "Du har inte behörighet."))
+        await ctx.send(embed=embed_message("Permission Denied", "Du har inte behörighet.", discord.Color.red()))
         return
     active = get_active_keys()
     if not active:
-        await ctx.reply(embed=embed_message("Active Keys", "Det finns inga aktiva keys."))
+        await ctx.send(embed=embed_message("Active Keys", "There are no active keys.", discord.Color.blue()))
     else:
-        await ctx.reply(embed=embed_message("Active Keys", "\n".join(active)))
+        embed = discord.Embed(title="Active Keys", color=discord.Color.blue())
+        for k in active:
+            embed.add_field(name="Key", value=k, inline=False)
+        await ctx.send(embed=embed)
 
 @bot.command()
 async def cmds(ctx):
     if not has_allowed_role(ctx):
-        await ctx.reply(embed=embed_message("Error", "Du har inte behörighet."))
+        await ctx.send(embed=embed_message("Permission Denied", "Du har inte behörighet.", discord.Color.red()))
         return
-    description = (
+    commands_text = (
         "!generatekey <amount>\n"
-        "!wipekeys\n"
-        "!activekeys\n"
-        "!kick <username>\n"
-        "!promote <username>\n"
-        "!demote <username>\n"
-        "!key <key> <username>\n"
-        "!rank <username> <rank>\n"
+        "!wipekeys\n!activekeys\n!kick <username>\n"
+        "!promote <username>\n!demote <username>\n"
+        "!key <key> <username>\n!rank <username> <rank>\n"
         "!memberinfo <username>"
     )
-    await ctx.reply(embed=embed_message("Commands", description))
+    await ctx.send(embed=embed_message("Commands", commands_text, discord.Color.blue()))
 
 @bot.command()
 async def key(ctx, key: str, username: str):
     key_status = key_exists(key)
     if key_status is None:
-        await ctx.reply(embed=embed_message("Error", "Ogiltig key."))
+        await ctx.send(embed=embed_message("Error", "Invalid key.", discord.Color.red()))
         return
     if key_status:
-        await ctx.reply(embed=embed_message("Error", "Denna key är redan använd."))
+        await ctx.send(embed=embed_message("Error", "This key has already been used.", discord.Color.red()))
         return
     user_id = get_user_id(username)
     if not user_id:
-        await ctx.reply(embed=embed_message("Error", "Roblox användare hittades inte."))
+        await ctx.send(embed=embed_message("Error", "Roblox user not found.", discord.Color.red()))
         return
     if accept_group_request(user_id):
         set_key_used(key)
-        await ctx.reply(embed=embed_message("Joined", f"{username} har blivit accepterad i gruppen!", discord.Color.green()))
+        await ctx.send(embed=embed_message("Success", f"{username} has been accepted into the group!", discord.Color.green()))
     else:
-        await ctx.reply(embed=embed_message("Error", "Misslyckades att acceptera join request."))
+        await ctx.send(embed=embed_message("Error", "Failed to accept the join request.", discord.Color.red()))
 
 @bot.command()
 async def kick(ctx, username: str):
     if not has_allowed_role(ctx):
-        await ctx.reply(embed=embed_message("Error", "Du har inte behörighet."))
+        await ctx.send(embed=embed_message("Permission Denied", "Du har inte behörighet.", discord.Color.red()))
         return
     user_id = get_user_id(username)
     if not user_id:
-        await ctx.reply(embed=embed_message("Error", "Användare hittades inte."))
+        await ctx.send(embed=embed_message("Error", "User not found.", discord.Color.red()))
         return
     if kick_from_group(user_id):
-        await ctx.reply(embed=embed_message("Kick", f"{username} har blivit kickad.", discord.Color.red()))
+        await ctx.send(embed=embed_message("Success", f"{username} has been kicked.", discord.Color.green()))
     else:
-        await ctx.reply(embed=embed_message("Error", "Misslyckades att kicka."))
+        await ctx.send(embed=embed_message("Error", "Failed to kick user.", discord.Color.red()))
 
 @bot.command()
 async def promote(ctx, username: str):
     if not has_allowed_role(ctx):
-        await ctx.reply(embed=embed_message("Error", "Du har inte behörighet."))
+        await ctx.send(embed=embed_message("Permission Denied", "Du har inte behörighet.", discord.Color.red()))
         return
     user_id = get_user_id(username)
     if not user_id:
-        await ctx.reply(embed=embed_message("Error", "Användare hittades inte."))
+        await ctx.send(embed=embed_message("Error", "User not found.", discord.Color.red()))
         return
     if promote_in_group(user_id):
-        await ctx.reply(embed=embed_message("Promote", f"{username} har blivit befordrad.", discord.Color.green()))
+        await ctx.send(embed=embed_message("Success", f"{username} has been promoted.", discord.Color.green()))
     else:
-        await ctx.reply(embed=embed_message("Error", "Misslyckades att befordra."))
+        await ctx.send(embed=embed_message("Error", "Failed to promote user.", discord.Color.red()))
 
 @bot.command()
 async def demote(ctx, username: str):
     if not has_allowed_role(ctx):
-        await ctx.reply(embed=embed_message("Error", "Du har inte behörighet."))
+        await ctx.send(embed=embed_message("Permission Denied", "Du har inte behörighet.", discord.Color.red()))
         return
     user_id = get_user_id(username)
     if not user_id:
-        await ctx.reply(embed=embed_message("Error", "Användare hittades inte."))
+        await ctx.send(embed=embed_message("Error", "User not found.", discord.Color.red()))
         return
     if demote_in_group(user_id):
-        await ctx.reply(embed=embed_message("Demote", f"{username} har blivit nedgraderad.", discord.Color.orange()))
+        await ctx.send(embed=embed_message("Success", f"{username} has been demoted.", discord.Color.green()))
     else:
-        await ctx.reply(embed=embed_message("Error", "Misslyckades att nedgradera."))
+        await ctx.send(embed=embed_message("Error", "Failed to demote user.", discord.Color.red()))
 
 @bot.command()
 async def rank(ctx, username: str, *, rank: str):
     if not has_allowed_role(ctx):
-        await ctx.reply(embed=embed_message("Error", "Du har inte behörighet."))
+        await ctx.send(embed=embed_message("Permission Denied", "Du har inte behörighet.", discord.Color.red()))
         return
     user_id = get_user_id(username)
     if not user_id:
-        await ctx.reply(embed=embed_message("Error", "Användare hittades inte."))
+        await ctx.send(embed=embed_message("Error", "User not found.", discord.Color.red()))
         return
     roles = get_group_roles()
     role_match = next((r for r in roles if r["name"].lower() == rank.lower()), None)
     if not role_match:
-        await ctx.reply(embed=embed_message("Error", f"Rank '{rank}' hittades inte."))
+        await ctx.send(embed=embed_message("Error", f"Rank '{rank}' not found.", discord.Color.red()))
         return
     if set_user_role(user_id, role_match["id"]):
-        await ctx.reply(embed=embed_message("Rank", f"{username} har nu rank {rank}.", discord.Color.green()))
+        await ctx.send(embed=embed_message("Success", f"{username} has been set to rank {rank}.", discord.Color.green()))
     else:
-        await ctx.reply(embed=embed_message("Error", "Misslyckades att sätta rank."))
+        await ctx.send(embed=embed_message("Error", "Failed to set rank.", discord.Color.red()))
 
 @bot.command()
 async def memberinfo(ctx, username: str):
     if not has_allowed_role(ctx):
-        await ctx.reply(embed=embed_message("Error", "Du har inte behörighet."))
+        await ctx.send(embed=embed_message("Permission Denied", "Du har inte behörighet.", discord.Color.red()))
         return
     user_id = get_user_id(username)
     if not user_id:
-        await ctx.reply(embed=embed_message("Error", "Användare hittades inte."))
+        await ctx.send(embed=embed_message("Error", "User not found.", discord.Color.red()))
         return
     role = get_user_role_in_group(user_id)
     if not role:
-        await ctx.reply(embed=embed_message("Info", f"{username} är inte medlem i gruppen."))
+        await ctx.send(embed=embed_message("Info", f"{username} is not in the group.", discord.Color.blue()))
         return
-    await ctx.reply(embed=embed_message("Info", f"{username} har rollen {role['name']} (Rank {role['rank']})."))
+    await ctx.send(embed=embed_message("Member Info", f"{username} has the role {role['name']} (Rank {role['rank']}).", discord.Color.blue()))
 
 bot.loop.create_task(keep_alive())
 bot.run(TOKEN)
