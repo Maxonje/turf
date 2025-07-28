@@ -95,6 +95,7 @@ ALLOWED_ROLE_ID = int(os.environ["ALLOWED_ROLE_ID"])
 intents = discord.Intents.default()
 intents.members = True
 intents.message_content = True
+intents.guilds = True  # viktigt för slash-kommandon
 bot = commands.Bot(command_prefix="!", intents=intents)
 tree = bot.tree  # slash commands manager
 
@@ -213,8 +214,11 @@ async def generatekey(interaction: discord.Interaction, amount: int):
     embed = discord.Embed(title="Generated keys", color=discord.Color.green())
     for k in new_keys:
         embed.add_field(name="Key", value=f"```{k}```", inline=False)
-    await interaction.user.send(embed=embed)
-    await interaction.response.send_message("Keys have been generated and sent to your DM!", ephemeral=True)
+    try:
+        await interaction.user.send(embed=embed)
+        await interaction.response.send_message("Keys have been generated and sent to your DM!", ephemeral=True)
+    except discord.Forbidden:
+        await interaction.response.send_message("Keys have been generated, but I couldn't DM you. Enable DMs!", ephemeral=True)
 
 @tree.command(name="wipekeys", description="Wipe all keys")
 async def wipekeys(interaction: discord.Interaction):
