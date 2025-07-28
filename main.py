@@ -33,11 +33,20 @@ cur = conn.cursor()
 # Skapa table om den inte finns
 cur.execute("""
 CREATE TABLE IF NOT EXISTS keys (
-    key TEXT PRIMARY KEY,
-    used BOOLEAN DEFAULT FALSE
+    key TEXT PRIMARY KEY
 );
 """)
 conn.commit()
+
+# Kontrollera om kolumnen 'used' finns, om inte lägg till den
+cur.execute("""
+SELECT column_name
+FROM information_schema.columns
+WHERE table_name='keys' AND column_name='used';
+""")
+if cur.fetchone() is None:
+    cur.execute("ALTER TABLE keys ADD COLUMN used BOOLEAN DEFAULT FALSE;")
+    conn.commit()
 
 def load_keys():
     cur.execute("SELECT key, used FROM keys;")
@@ -311,22 +320,26 @@ async def demote(interaction: discord.Interaction, username: str):
         await interaction.response.send_message("Failed to demote user.", ephemeral=True)
 
 @tree.command(name="rank", description="Set user rank in Roblox group")
-@app_commands.describe(username="Roblox username", rank_name="Rank name")
-async def rank(interaction: discord.Interaction, username: str, rank_name: str):
+@app_commands.describe(username="Roblox username", rank="Rank name")
+async def rank(interaction: discord.Interaction, username: str, rank: str):
     if not has_allowed_role(interaction):
         await interaction.response.send_message("You do not have permission to use this command.", ephemeral=True)
+        return
+    roles = get_group_roles()
+    target_role = None
+    for r in roles:
+        if r["name"].lower() == rank.lower():
+            target_role = r
+            break
+    if target_role is None:
+        await interaction.response.send_message(f"Rank '{rank}' not found.", ephemeral=True)
         return
     user_id = get_user_id(username)
     if not user_id:
         await interaction.response.send_message("User not found.", ephemeral=True)
         return
-    roles = get_group_roles()
-    target_role = next((r for r in roles if r["name"].lower() == rank_name.lower()), None)
-    if not target_role:
-        await interaction.response.send_message(f"Rank '{rank_name}' not found.", ephemeral=True)
-        return
     if set_user_role(user_id, target_role["id"]):
-        await interaction.response.send_message(f"User {username} has been set to rank {rank_name}.", ephemeral=False)
+        await interaction.response.send_message(f"User {username} rank set to {rank}.", ephemeral=False)
     else:
         await interaction.response.send_message("Failed to set rank.", ephemeral=True)
 
@@ -342,9 +355,10 @@ async def memberinfo(interaction: discord.Interaction, username: str):
         return
     role = get_user_role_in_group(user_id)
     if role:
-        await interaction.response.send_message(f"{username} is currently '{role['name']}' in the group.", ephemeral=False)
+        await interaction.response.send_message(f"User {username} has the rank: {role['name']}", ephemeral=False)
     else:
-        await interaction.response.send_message(f"{username} is not in the group.", ephemeral=True)
+        await interaction.response.send_message("User is not in the group.", ephemeral=True)
 
+# ===== Run =====
 keep_alive()
 bot.run(TOKEN)
