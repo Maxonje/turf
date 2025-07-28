@@ -202,7 +202,7 @@ async def on_ready():
 @app_commands.describe(amount="Number of keys to generate")
 async def generatekey(interaction: discord.Interaction, amount: int):
     if not has_allowed_role(interaction):
-        await interaction.response.send_message("You do not have permission to use this command.", ephemeral=True)
+        await interaction.response.send_message("Du har inte behörighet att använda detta kommando.", ephemeral=True)
         return
     new_keys = []
     for _ in range(amount):
@@ -223,7 +223,7 @@ async def generatekey(interaction: discord.Interaction, amount: int):
 @tree.command(name="wipekeys", description="Wipe all keys")
 async def wipekeys(interaction: discord.Interaction):
     if not has_allowed_role(interaction):
-        await interaction.response.send_message("You do not have permission to use this command.", ephemeral=True)
+        await interaction.response.send_message("Du har inte behörighet att använda detta kommando.", ephemeral=True)
         return
     wipe_all_keys()
     await interaction.response.send_message("All keys have been wiped!", ephemeral=True)
@@ -231,7 +231,7 @@ async def wipekeys(interaction: discord.Interaction):
 @tree.command(name="activekeys", description="Show active keys")
 async def activekeys(interaction: discord.Interaction):
     if not has_allowed_role(interaction):
-        await interaction.response.send_message("You do not have permission to use this command.", ephemeral=True)
+        await interaction.response.send_message("Du har inte behörighet att använda detta kommando.", ephemeral=True)
         return
     active = get_active_keys()
     if not active:
@@ -242,7 +242,7 @@ async def activekeys(interaction: discord.Interaction):
 @tree.command(name="cmds", description="List all commands")
 async def cmds(interaction: discord.Interaction):
     if not has_allowed_role(interaction):
-        await interaction.response.send_message("You do not have permission to use this command.", ephemeral=True)
+        await interaction.response.send_message("Du har inte behörighet att använda detta kommando.", ephemeral=True)
         return
     text = (
         "**Commands:**\n"
@@ -282,7 +282,7 @@ async def key(interaction: discord.Interaction, key: str, username: str):
 @app_commands.describe(username="Roblox username")
 async def kick(interaction: discord.Interaction, username: str):
     if not has_allowed_role(interaction):
-        await interaction.response.send_message("You do not have permission to use this command.", ephemeral=True)
+        await interaction.response.send_message("Du har inte behörighet att använda detta kommando.", ephemeral=True)
         return
     user_id = get_user_id(username)
     if not user_id:
@@ -297,7 +297,7 @@ async def kick(interaction: discord.Interaction, username: str):
 @app_commands.describe(username="Roblox username")
 async def promote(interaction: discord.Interaction, username: str):
     if not has_allowed_role(interaction):
-        await interaction.response.send_message("You do not have permission to use this command.", ephemeral=True)
+        await interaction.response.send_message("Du har inte behörighet att använda detta kommando.", ephemeral=True)
         return
     user_id = get_user_id(username)
     if not user_id:
@@ -312,7 +312,7 @@ async def promote(interaction: discord.Interaction, username: str):
 @app_commands.describe(username="Roblox username")
 async def demote(interaction: discord.Interaction, username: str):
     if not has_allowed_role(interaction):
-        await interaction.response.send_message("You do not have permission to use this command.", ephemeral=True)
+        await interaction.response.send_message("Du har inte behörighet att använda detta kommando.", ephemeral=True)
         return
     user_id = get_user_id(username)
     if not user_id:
@@ -327,7 +327,7 @@ async def demote(interaction: discord.Interaction, username: str):
 @app_commands.describe(username="Roblox username", rank="Rank name")
 async def rank(interaction: discord.Interaction, username: str, rank: str):
     if not has_allowed_role(interaction):
-        await interaction.response.send_message("You do not have permission to use this command.", ephemeral=True)
+        await interaction.response.send_message("Du har inte behörighet att använda detta kommando.", ephemeral=True)
         return
     roles = get_group_roles()
     target_role = None
@@ -351,7 +351,7 @@ async def rank(interaction: discord.Interaction, username: str, rank: str):
 @app_commands.describe(username="Roblox username")
 async def memberinfo(interaction: discord.Interaction, username: str):
     if not has_allowed_role(interaction):
-        await interaction.response.send_message("You do not have permission to use this command.", ephemeral=True)
+        await interaction.response.send_message("Du har inte behörighet att använda detta kommando.", ephemeral=True)
         return
     user_id = get_user_id(username)
     if not user_id:
