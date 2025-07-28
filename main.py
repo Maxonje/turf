@@ -185,8 +185,9 @@ async def on_ready():
 
 @tree.command(name="generatekey", description="Generate new keys")
 async def generatekey(interaction: discord.Interaction, amount: int):
+    await interaction.response.defer(ephemeral=True)
     if not has_allowed_role(interaction.user):
-        await interaction.response.send_message(embed=embed_message("Permission Denied", "You do not have permission.", discord.Color.red()), ephemeral=True)
+        await interaction.followup.send(embed=embed_message("Permission Denied", "You do not have permission.", discord.Color.red()), ephemeral=True)
         return
     new_keys = []
     for _ in range(amount):
@@ -200,142 +201,188 @@ async def generatekey(interaction: discord.Interaction, amount: int):
         embed.add_field(name="Key", value=f"```{k}```", inline=False)
     try:
         await interaction.user.send(embed=embed)
-        await interaction.response.send_message(embed=embed_message("Done", "Keys have been sent to your DM!", discord.Color.green()), ephemeral=True)
+        await interaction.followup.send(embed=embed_message("Done", "Keys have been sent to your DM!", discord.Color.green()), ephemeral=True)
     except discord.Forbidden:
-        await interaction.response.send_message(embed=embed_message("Warning", "Couldn't DM you. Enable DMs!", discord.Color.red()), ephemeral=True)
+        await interaction.followup.send(embed=embed_message("Warning", "Couldn't DM you. Enable DMs!", discord.Color.red()), ephemeral=True)
 
 @tree.command(name="wipekeys", description="Wipe all keys")
 async def wipekeys(interaction: discord.Interaction):
+    await interaction.response.defer(ephemeral=True)
     if not has_allowed_role(interaction.user):
-        await interaction.response.send_message(embed=embed_message("Permission Denied", "You do not have permission.", discord.Color.red()), ephemeral=True)
+        await interaction.followup.send(embed=embed_message("Permission Denied", "You do not have permission.", discord.Color.red()), ephemeral=True)
         return
     wipe_all_keys()
-    await interaction.response.send_message(embed=embed_message("Success", "All keys have been wiped!", discord.Color.green()), ephemeral=True)
+    await interaction.followup.send(embed=embed_message("Success", "All keys have been wiped!", discord.Color.green()), ephemeral=True)
 
 @tree.command(name="activekeys", description="Show active keys")
 async def activekeys(interaction: discord.Interaction):
+    await interaction.response.defer(ephemeral=True)
     if not has_allowed_role(interaction.user):
-        await interaction.response.send_message(embed=embed_message("Permission Denied", "You do not have permission.", discord.Color.red()), ephemeral=True)
+        await interaction.followup.send(embed=embed_message("Permission Denied", "You do not have permission.", discord.Color.red()), ephemeral=True)
         return
     active = get_active_keys()
     if not active:
-        await interaction.response.send_message(embed=embed_message("Active Keys", "There are no active keys.", discord.Color.blue()), ephemeral=True)
-    else:
-        embed = discord.Embed(title="Active Keys", color=discord.Color.blue())
-        for k in active:
-            embed.add_field(name="Key", value=k, inline=False)
-        await interaction.response.send_message(embed=embed, ephemeral=True)
+        await interaction.followup.send(embed=embed_message("Active Keys", "No active keys found.", discord.Color.gold()), ephemeral=True)
+        return
+    embed = discord.Embed(title="Active Keys", color=discord.Color.blue())
+    for k in active:
+        embed.add_field(name="Key", value=f"```{k}```", inline=False)
+    await interaction.followup.send(embed=embed, ephemeral=True)
 
-@tree.command(name="cmds", description="Show commands list")
+@tree.command(name="cmds", description="Show all commands")
 async def cmds(interaction: discord.Interaction):
-    if not has_allowed_role(interaction.user):
-        await interaction.response.send_message(embed=embed_message("Permission Denied", "You do not have permission.", discord.Color.red()), ephemeral=True)
-        return
-    commands_text = (
-        "/generatekey <amount>\n"
-        "/wipekeys\n"
-        "/activekeys\n"
-        "/kick <username>\n"
-        "/promote <username>\n"
-        "/demote <username>\n"
-        "/key <key> <username>\n"
-        "/rank <username> <rank>\n"
-        "/memberinfo <username>"
+    await interaction.response.send_message(
+        """**Available commands:**
+/generatekey <amount> - Generate new keys (admin only)
+/wipekeys - Delete all keys (admin only)
+/activekeys - Show all active keys (admin only)
+/key <key> <username> - Use a key to accept a user in Roblox group (one-time use)
+/kick <username> - Kick a user from Roblox group
+/rank <username> <rank> - Set rank of a user
+/promote <username> - Promote a user
+/demote <username> - Demote a user
+/memberinfo <username> - Show info about a user
+""",
+        ephemeral=True
     )
-    await interaction.response.send_message(embed=embed_message("Commands", commands_text, discord.Color.blue()), ephemeral=True)
 
-@tree.command(name="key", description="Use a key to accept user into group")
+@tree.command(name="key", description="Use a key to accept user in Roblox group")
 async def key(interaction: discord.Interaction, key: str, username: str):
-    key_status = key_exists(key)
-    if key_status is None:
-        await interaction.response.send_message(embed=embed_message("Error", "Invalid key.", discord.Color.red()), ephemeral=True)
+    await interaction.response.defer()
+    # Check key exists and unused
+    used_status = key_exists(key)
+    if used_status is None:
+        await interaction.followup.send(embed=embed_message("Error", "Key does not exist.", discord.Color.red()), ephemeral=True)
         return
-    if key_status:
-        await interaction.response.send_message(embed=embed_message("Error", "This key has already been used.", discord.Color.red()), ephemeral=True)
+    if used_status:
+        await interaction.followup.send(embed=embed_message("Error", "Key has already been used.", discord.Color.red()), ephemeral=True)
         return
+
+    # Get Roblox user id
     user_id = get_user_id(username)
     if not user_id:
-        await interaction.response.send_message(embed=embed_message("Error", "Roblox user not found.", discord.Color.red()), ephemeral=True)
+        await interaction.followup.send(embed=embed_message("Error", f"Roblox user '{username}' not found.", discord.Color.red()), ephemeral=True)
         return
-    if accept_group_request(user_id):
+
+    # Accept join request in Roblox group
+    success = accept_group_request(user_id)
+    if success:
         set_key_used(key)
-        await interaction.response.send_message(embed=embed_message("Success", f"{username} has been accepted into the group using the key!", discord.Color.green()), ephemeral=True)
+        await interaction.followup.send(embed=embed_message("Success", f"User '{username}' has been accepted to the group using key `{key}`.", discord.Color.green()))
+        # Optional: log to a channel
+        if LOG_CHANNEL_ID:
+            channel = bot.get_channel(LOG_CHANNEL_ID)
+            if channel:
+                await channel.send(f"User '{username}' accepted with key `{key}` by {interaction.user.mention}.")
     else:
-        await interaction.response.send_message(embed=embed_message("Error", "Failed to accept user.", discord.Color.red()), ephemeral=True)
+        await interaction.followup.send(embed=embed_message("Error", f"Failed to accept user '{username}' to the group.", discord.Color.red()), ephemeral=True)
 
-@tree.command(name="kick", description="Kick user from group")
+@tree.command(name="kick", description="Kick a user from Roblox group")
 async def kick(interaction: discord.Interaction, username: str):
+    await interaction.response.defer()
     if not has_allowed_role(interaction.user):
-        await interaction.response.send_message(embed=embed_message("Permission Denied", "You do not have permission.", discord.Color.red()), ephemeral=True)
+        await interaction.followup.send(embed=embed_message("Permission Denied", "You do not have permission.", discord.Color.red()), ephemeral=True)
         return
     user_id = get_user_id(username)
     if not user_id:
-        await interaction.response.send_message(embed=embed_message("Error", "Roblox user not found.", discord.Color.red()), ephemeral=True)
+        await interaction.followup.send(embed=embed_message("Error", f"Roblox user '{username}' not found.", discord.Color.red()), ephemeral=True)
         return
-    if kick_from_group(user_id):
-        await interaction.response.send_message(embed=embed_message("Success", f"{username} was kicked from the group.", discord.Color.green()), ephemeral=True)
+    success = kick_from_group(user_id)
+    if success:
+        await interaction.followup.send(embed=embed_message("Success", f"User '{username}' has been kicked from the group.", discord.Color.green()))
+        if LOG_CHANNEL_ID:
+            channel = bot.get_channel(LOG_CHANNEL_ID)
+            if channel:
+                await channel.send(f"User '{username}' was kicked from group by {interaction.user.mention}.")
     else:
-        await interaction.response.send_message(embed=embed_message("Error", "Failed to kick user.", discord.Color.red()), ephemeral=True)
+        await interaction.followup.send(embed=embed_message("Error", f"Failed to kick user '{username}'.", discord.Color.red()), ephemeral=True)
 
-@tree.command(name="promote", description="Promote user in group")
-async def promote(interaction: discord.Interaction, username: str):
-    if not has_allowed_role(interaction.user):
-        await interaction.response.send_message(embed=embed_message("Permission Denied", "You do not have permission.", discord.Color.red()), ephemeral=True)
-        return
-    user_id = get_user_id(username)
-    if not user_id:
-        await interaction.response.send_message(embed=embed_message("Error", "Roblox user not found.", discord.Color.red()), ephemeral=True)
-        return
-    if promote_in_group(user_id):
-        await interaction.response.send_message(embed=embed_message("Success", f"{username} was promoted.", discord.Color.green()), ephemeral=True)
-    else:
-        await interaction.response.send_message(embed=embed_message("Error", "Failed to promote user.", discord.Color.red()), ephemeral=True)
-
-@tree.command(name="demote", description="Demote user in group")
-async def demote(interaction: discord.Interaction, username: str):
-    if not has_allowed_role(interaction.user):
-        await interaction.response.send_message(embed=embed_message("Permission Denied", "You do not have permission.", discord.Color.red()), ephemeral=True)
-        return
-    user_id = get_user_id(username)
-    if not user_id:
-        await interaction.response.send_message(embed=embed_message("Error", "Roblox user not found.", discord.Color.red()), ephemeral=True)
-        return
-    if demote_in_group(user_id):
-        await interaction.response.send_message(embed=embed_message("Success", f"{username} was demoted.", discord.Color.green()), ephemeral=True)
-    else:
-        await interaction.response.send_message(embed=embed_message("Error", "Failed to demote user.", discord.Color.red()), ephemeral=True)
-
-@tree.command(name="rank", description="Set user rank")
+@tree.command(name="rank", description="Set rank of a user")
 async def rank(interaction: discord.Interaction, username: str, rank: int):
+    await interaction.response.defer()
     if not has_allowed_role(interaction.user):
-        await interaction.response.send_message(embed=embed_message("Permission Denied", "You do not have permission.", discord.Color.red()), ephemeral=True)
+        await interaction.followup.send(embed=embed_message("Permission Denied", "You do not have permission.", discord.Color.red()), ephemeral=True)
         return
     user_id = get_user_id(username)
     if not user_id:
-        await interaction.response.send_message(embed=embed_message("Error", "Roblox user not found.", discord.Color.red()), ephemeral=True)
+        await interaction.followup.send(embed=embed_message("Error", f"Roblox user '{username}' not found.", discord.Color.red()), ephemeral=True)
         return
     roles = get_group_roles()
-    desired_role = next((r for r in roles if r["rank"] == rank), None)
-    if not desired_role:
-        await interaction.response.send_message(embed=embed_message("Error", "Invalid rank.", discord.Color.red()), ephemeral=True)
+    # Find role by rank
+    role_to_set = None
+    for role in roles:
+        if role["rank"] == rank:
+            role_to_set = role
+            break
+    if not role_to_set:
+        await interaction.followup.send(embed=embed_message("Error", f"No role found with rank {rank}.", discord.Color.red()), ephemeral=True)
         return
-    if set_user_role(user_id, desired_role["id"]):
-        await interaction.response.send_message(embed=embed_message("Success", f"{username}'s rank set to {rank}.", discord.Color.green()), ephemeral=True)
+    success = set_user_role(user_id, role_to_set["id"])
+    if success:
+        await interaction.followup.send(embed=embed_message("Success", f"User '{username}' rank set to {role_to_set['name']} (Rank {rank}).", discord.Color.green()))
+        if LOG_CHANNEL_ID:
+            channel = bot.get_channel(LOG_CHANNEL_ID)
+            if channel:
+                await channel.send(f"User '{username}' rank set to {role_to_set['name']} (Rank {rank}) by {interaction.user.mention}.")
     else:
-        await interaction.response.send_message(embed=embed_message("Error", "Failed to set rank.", discord.Color.red()), ephemeral=True)
+        await interaction.followup.send(embed=embed_message("Error", f"Failed to set rank for user '{username}'.", discord.Color.red()), ephemeral=True)
 
-@tree.command(name="memberinfo", description="Get info about a group member")
-async def memberinfo(interaction: discord.Interaction, username: str):
+@tree.command(name="promote", description="Promote a user")
+async def promote(interaction: discord.Interaction, username: str):
+    await interaction.response.defer()
+    if not has_allowed_role(interaction.user):
+        await interaction.followup.send(embed=embed_message("Permission Denied", "You do not have permission.", discord.Color.red()), ephemeral=True)
+        return
     user_id = get_user_id(username)
     if not user_id:
-        await interaction.response.send_message(embed=embed_message("Error", "Roblox user not found.", discord.Color.red()), ephemeral=True)
+        await interaction.followup.send(embed=embed_message("Error", f"Roblox user '{username}' not found.", discord.Color.red()), ephemeral=True)
+        return
+    success = promote_in_group(user_id)
+    if success:
+        await interaction.followup.send(embed=embed_message("Success", f"User '{username}' promoted successfully.", discord.Color.green()))
+        if LOG_CHANNEL_ID:
+            channel = bot.get_channel(LOG_CHANNEL_ID)
+            if channel:
+                await channel.send(f"User '{username}' was promoted by {interaction.user.mention}.")
+    else:
+        await interaction.followup.send(embed=embed_message("Error", f"Failed to promote user '{username}'.", discord.Color.red()), ephemeral=True)
+
+@tree.command(name="demote", description="Demote a user")
+async def demote(interaction: discord.Interaction, username: str):
+    await interaction.response.defer()
+    if not has_allowed_role(interaction.user):
+        await interaction.followup.send(embed=embed_message("Permission Denied", "You do not have permission.", discord.Color.red()), ephemeral=True)
+        return
+    user_id = get_user_id(username)
+    if not user_id:
+        await interaction.followup.send(embed=embed_message("Error", f"Roblox user '{username}' not found.", discord.Color.red()), ephemeral=True)
+        return
+    success = demote_in_group(user_id)
+    if success:
+        await interaction.followup.send(embed=embed_message("Success", f"User '{username}' demoted successfully.", discord.Color.green()))
+        if LOG_CHANNEL_ID:
+            channel = bot.get_channel(LOG_CHANNEL_ID)
+            if channel:
+                await channel.send(f"User '{username}' was demoted by {interaction.user.mention}.")
+    else:
+        await interaction.followup.send(embed=embed_message("Error", f"Failed to demote user '{username}'.", discord.Color.red()), ephemeral=True)
+
+@tree.command(name="memberinfo", description="Show info about a user")
+async def memberinfo(interaction: discord.Interaction, username: str):
+    await interaction.response.defer()
+    user_id = get_user_id(username)
+    if not user_id:
+        await interaction.followup.send(embed=embed_message("Error", f"Roblox user '{username}' not found.", discord.Color.red()), ephemeral=True)
         return
     role = get_user_role_in_group(user_id)
-    if not role:
-        await interaction.response.send_message(embed=embed_message("Info", f"{username} is not in the group.", discord.Color.blue()), ephemeral=True)
-        return
-    await interaction.response.send_message(embed=embed_message(f"Member Info for {username}", f"Role: {role['name']}\nRank: {role['rank']}", discord.Color.green()), ephemeral=True)
+    embed = discord.Embed(title=f"Member Info: {username}", color=discord.Color.blue())
+    embed.add_field(name="UserID", value=str(user_id))
+    if role:
+        embed.add_field(name="Role", value=f"{role['name']} (Rank {role['rank']})")
+    else:
+        embed.add_field(name="Role", value="Not in group or role info unavailable")
+    await interaction.followup.send(embed=embed, ephemeral=True)
 
-# ===== Main =====
+# ===== Run bot =====
 keep_alive()
 bot.run(TOKEN)
