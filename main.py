@@ -1,10 +1,8 @@
 import discord
 from discord.ext import commands
-from discord import app_commands
 import random
 import string
 import os
-import json
 import requests
 import psycopg2
 from urllib.parse import urlparse
@@ -30,35 +28,18 @@ DATABASE_URL = os.environ["DATABASE_URL"]
 conn = psycopg2.connect(DATABASE_URL, sslmode='require')
 cur = conn.cursor()
 
-# Skapa table om den inte finns
 cur.execute("""
 CREATE TABLE IF NOT EXISTS keys (
-    key TEXT PRIMARY KEY
+    key TEXT PRIMARY KEY,
+    used BOOLEAN DEFAULT FALSE
 );
 """)
 conn.commit()
-
-# Kontrollera om kolumnen 'used' finns, om inte lägg till den
-cur.execute("""
-SELECT column_name
-FROM information_schema.columns
-WHERE table_name='keys' AND column_name='used';
-""")
-if cur.fetchone() is None:
-    cur.execute("ALTER TABLE keys ADD COLUMN used BOOLEAN DEFAULT FALSE;")
-    conn.commit()
 
 def load_keys():
     cur.execute("SELECT key, used FROM keys;")
     rows = cur.fetchall()
     return {row[0]: row[1] for row in rows}
-
-def save_keys(keys_dict):
-    # Rensar och sparar alla keys (inte effektiv, men samma logik som filen)
-    cur.execute("DELETE FROM keys;")
-    for k, used in keys_dict.items():
-        cur.execute("INSERT INTO keys (key, used) VALUES (%s, %s)", (k, used))
-    conn.commit()
 
 def insert_key(new_key):
     cur.execute("INSERT INTO keys (key, used) VALUES (%s, %s)", (new_key, False))
@@ -83,7 +64,6 @@ def key_exists(key):
         return None
     return row[0]
 
-# Ladda keys vid start
 keys = load_keys()
 
 TOKEN = os.environ["TOKEN"]
@@ -95,11 +75,10 @@ ALLOWED_ROLE_ID = int(os.environ["ALLOWED_ROLE_ID"])
 intents = discord.Intents.default()
 intents.members = True
 intents.message_content = True
-intents.guilds = True  # viktigt för slash-kommandon
+intents.guilds = True
 bot = commands.Bot(command_prefix="!", intents=intents)
-tree = bot.tree  # slash commands manager
 
-# ===== Roblox API helper functions =====
+# ===== Roblox API helper =====
 def generate_key(length=16):
     chars = string.ascii_uppercase + string.digits
     return ''.join(random.choice(chars) for _ in range(length))
@@ -119,7 +98,6 @@ def roblox_request_with_xcsrf(method, url, json_data=None):
         "Content-Type": "application/json"
     }
     resp = requests.request(method, url, headers=headers, json=json_data)
-    # Handle X-CSRF-Token requirement
     if resp.status_code == 403 and "X-CSRF-TOKEN" in resp.headers:
         headers["X-CSRF-TOKEN"] = resp.headers["X-CSRF-TOKEN"]
         resp = requests.request(method, url, headers=headers, json=json_data)
@@ -182,10 +160,8 @@ def check_roblox_login():
     resp = requests.post(url, headers=headers)
     return resp.status_code in [200, 403]
 
-# ===== Helper function =====
-def has_allowed_role(interaction: discord.Interaction):
-    roles_user = interaction.user.roles if hasattr(interaction.user, 'roles') else []
-    return any(r.id == ALLOWED_ROLE_ID for r in roles_user)
+def has_allowed_role(ctx):
+    return any(r.id == ALLOWED_ROLE_ID for r in ctx.author.roles)
 
 # ===== Events =====
 @bot.event
@@ -195,14 +171,16 @@ async def on_ready():
         print("✅ Roblox cookie works and logged in!")
     else:
         print("❌ Roblox cookie is invalid!")
-    await tree.sync()
 
-# ===== Slash commands =====
-@tree.command(name="generatekey", description="Generate keys for Roblox group")
-@app_commands.describe(amount="Number of keys to generate")
-async def generatekey(interaction: discord.Interaction, amount: int):
-    if not has_allowed_role(interaction):
-        await interaction.response.send_message("Du har inte behörighet att använda detta kommando.", ephemeral=True)
+# ===== Commands =====
+def embed_message(title, description, color=discord.Color.blue()):
+    embed = discord.Embed(title=title, description=description, color=color)
+    return embed
+
+@bot.command()
+async def generatekey(ctx, amount: int):
+    if not has_allowed_role(ctx):
+        await ctx.reply(embed=embed_message("Error", "Du har inte behörighet."))
         return
     new_keys = []
     for _ in range(amount):
@@ -211,154 +189,141 @@ async def generatekey(interaction: discord.Interaction, amount: int):
             new_key = generate_key()
         insert_key(new_key)
         new_keys.append(new_key)
-    embed = discord.Embed(title="Generated keys", color=discord.Color.green())
-    for k in new_keys:
-        embed.add_field(name="Key", value=f"```{k}```", inline=False)
-    try:
-        await interaction.user.send(embed=embed)
-        await interaction.response.send_message("Keys have been generated and sent to your DM!", ephemeral=True)
-    except discord.Forbidden:
-        await interaction.response.send_message("Keys have been generated, but I couldn't DM you. Enable DMs!", ephemeral=True)
+    description = "\n".join([f"`{k}`" for k in new_keys])
+    await ctx.author.send(embed=embed_message("Generated keys", description, discord.Color.green()))
+    await ctx.reply(embed=embed_message("Done", "Keys har skickats till din DM.", discord.Color.green()))
 
-@tree.command(name="wipekeys", description="Wipe all keys")
-async def wipekeys(interaction: discord.Interaction):
-    if not has_allowed_role(interaction):
-        await interaction.response.send_message("Du har inte behörighet att använda detta kommando.", ephemeral=True)
+@bot.command()
+async def wipekeys(ctx):
+    if not has_allowed_role(ctx):
+        await ctx.reply(embed=embed_message("Error", "Du har inte behörighet."))
         return
     wipe_all_keys()
-    await interaction.response.send_message("All keys have been wiped!", ephemeral=True)
+    await ctx.reply(embed=embed_message("Wiped", "Alla keys har raderats.", discord.Color.red()))
 
-@tree.command(name="activekeys", description="Show active keys")
-async def activekeys(interaction: discord.Interaction):
-    if not has_allowed_role(interaction):
-        await interaction.response.send_message("Du har inte behörighet att använda detta kommando.", ephemeral=True)
+@bot.command()
+async def activekeys(ctx):
+    if not has_allowed_role(ctx):
+        await ctx.reply(embed=embed_message("Error", "Du har inte behörighet."))
         return
     active = get_active_keys()
     if not active:
-        await interaction.response.send_message("There are no active keys.", ephemeral=True)
+        await ctx.reply(embed=embed_message("Active Keys", "Det finns inga aktiva keys."))
     else:
-        await interaction.response.send_message("**Active keys:**\n" + "\n".join(active), ephemeral=True)
+        await ctx.reply(embed=embed_message("Active Keys", "\n".join(active)))
 
-@tree.command(name="cmds", description="List all commands")
-async def cmds(interaction: discord.Interaction):
-    if not has_allowed_role(interaction):
-        await interaction.response.send_message("Du har inte behörighet att använda detta kommando.", ephemeral=True)
+@bot.command()
+async def cmds(ctx):
+    if not has_allowed_role(ctx):
+        await ctx.reply(embed=embed_message("Error", "Du har inte behörighet."))
         return
-    text = (
-        "**Commands:**\n"
-        "/generatekey <amount>\n"
-        "/wipekeys\n"
-        "/activekeys\n"
-        "/kick <username>\n"
-        "/promote <username>\n"
-        "/demote <username>\n"
-        "/key <key> <username>\n"
-        "/rank <username> <rank name>\n"
-        "/memberinfo <username>"
+    description = (
+        "!generatekey <amount>\n"
+        "!wipekeys\n"
+        "!activekeys\n"
+        "!kick <username>\n"
+        "!promote <username>\n"
+        "!demote <username>\n"
+        "!key <key> <username>\n"
+        "!rank <username> <rank>\n"
+        "!memberinfo <username>"
     )
-    await interaction.response.send_message(text, ephemeral=True)
+    await ctx.reply(embed=embed_message("Commands", description))
 
-@tree.command(name="key", description="Accept user into Roblox group with key")
-@app_commands.describe(key="The key to use", username="Roblox username")
-async def key(interaction: discord.Interaction, key: str, username: str):
-    # Detta kommando tillåter även icke-roller (alla kan använda key för att ansöka)
+@bot.command()
+async def key(ctx, key: str, username: str):
     key_status = key_exists(key)
     if key_status is None:
-        await interaction.response.send_message("Invalid key.", ephemeral=True)
+        await ctx.reply(embed=embed_message("Error", "Ogiltig key."))
         return
     if key_status:
-        await interaction.response.send_message("This key has already been used.", ephemeral=True)
+        await ctx.reply(embed=embed_message("Error", "Denna key är redan använd."))
         return
     user_id = get_user_id(username)
     if not user_id:
-        await interaction.response.send_message("The specified Roblox user was not found.", ephemeral=True)
+        await ctx.reply(embed=embed_message("Error", "Roblox användare hittades inte."))
         return
     if accept_group_request(user_id):
         set_key_used(key)
-        await interaction.response.send_message(f"**{username}** has successfully been accepted into the group!", ephemeral=False)
+        await ctx.reply(embed=embed_message("Joined", f"{username} har blivit accepterad i gruppen!", discord.Color.green()))
     else:
-        await interaction.response.send_message("Failed to accept the join request.", ephemeral=True)
+        await ctx.reply(embed=embed_message("Error", "Misslyckades att acceptera join request."))
 
-@tree.command(name="kick", description="Kick user from Roblox group")
-@app_commands.describe(username="Roblox username")
-async def kick(interaction: discord.Interaction, username: str):
-    if not has_allowed_role(interaction):
-        await interaction.response.send_message("Du har inte behörighet att använda detta kommando.", ephemeral=True)
+@bot.command()
+async def kick(ctx, username: str):
+    if not has_allowed_role(ctx):
+        await ctx.reply(embed=embed_message("Error", "Du har inte behörighet."))
         return
     user_id = get_user_id(username)
     if not user_id:
-        await interaction.response.send_message("User not found.", ephemeral=True)
+        await ctx.reply(embed=embed_message("Error", "Användare hittades inte."))
         return
     if kick_from_group(user_id):
-        await interaction.response.send_message(f"User {username} has been kicked.", ephemeral=False)
+        await ctx.reply(embed=embed_message("Kick", f"{username} har blivit kickad.", discord.Color.red()))
     else:
-        await interaction.response.send_message("Failed to kick user.", ephemeral=True)
+        await ctx.reply(embed=embed_message("Error", "Misslyckades att kicka."))
 
-@tree.command(name="promote", description="Promote user in Roblox group")
-@app_commands.describe(username="Roblox username")
-async def promote(interaction: discord.Interaction, username: str):
-    if not has_allowed_role(interaction):
-        await interaction.response.send_message("Du har inte behörighet att använda detta kommando.", ephemeral=True)
+@bot.command()
+async def promote(ctx, username: str):
+    if not has_allowed_role(ctx):
+        await ctx.reply(embed=embed_message("Error", "Du har inte behörighet."))
         return
     user_id = get_user_id(username)
     if not user_id:
-        await interaction.response.send_message("User not found.", ephemeral=True)
+        await ctx.reply(embed=embed_message("Error", "Användare hittades inte."))
         return
     if promote_in_group(user_id):
-        await interaction.response.send_message(f"User {username} has been promoted.", ephemeral=False)
+        await ctx.reply(embed=embed_message("Promote", f"{username} har blivit befordrad.", discord.Color.green()))
     else:
-        await interaction.response.send_message("Failed to promote user.", ephemeral=True)
+        await ctx.reply(embed=embed_message("Error", "Misslyckades att befordra."))
 
-@tree.command(name="demote", description="Demote user in Roblox group")
-@app_commands.describe(username="Roblox username")
-async def demote(interaction: discord.Interaction, username: str):
-    if not has_allowed_role(interaction):
-        await interaction.response.send_message("Du har inte behörighet att använda detta kommando.", ephemeral=True)
+@bot.command()
+async def demote(ctx, username: str):
+    if not has_allowed_role(ctx):
+        await ctx.reply(embed=embed_message("Error", "Du har inte behörighet."))
         return
     user_id = get_user_id(username)
     if not user_id:
-        await interaction.response.send_message("User not found.", ephemeral=True)
+        await ctx.reply(embed=embed_message("Error", "Användare hittades inte."))
         return
     if demote_in_group(user_id):
-        await interaction.response.send_message(f"User {username} has been demoted.", ephemeral=False)
+        await ctx.reply(embed=embed_message("Demote", f"{username} har blivit nedgraderad.", discord.Color.orange()))
     else:
-        await interaction.response.send_message("Failed to demote user.", ephemeral=True)
+        await ctx.reply(embed=embed_message("Error", "Misslyckades att nedgradera."))
 
-@tree.command(name="rank", description="Set user rank in Roblox group")
-@app_commands.describe(username="Roblox username", rank="Rank name")
-async def rank(interaction: discord.Interaction, username: str, rank: str):
-    if not has_allowed_role(interaction):
-        await interaction.response.send_message("Du har inte behörighet att använda detta kommando.", ephemeral=True)
+@bot.command()
+async def rank(ctx, username: str, *, rank: str):
+    if not has_allowed_role(ctx):
+        await ctx.reply(embed=embed_message("Error", "Du har inte behörighet."))
         return
     user_id = get_user_id(username)
     if not user_id:
-        await interaction.response.send_message("User not found.", ephemeral=True)
+        await ctx.reply(embed=embed_message("Error", "Användare hittades inte."))
         return
     roles = get_group_roles()
     role_match = next((r for r in roles if r["name"].lower() == rank.lower()), None)
     if not role_match:
-        await interaction.response.send_message(f"Rank '{rank}' not found.", ephemeral=True)
+        await ctx.reply(embed=embed_message("Error", f"Rank '{rank}' hittades inte."))
         return
     if set_user_role(user_id, role_match["id"]):
-        await interaction.response.send_message(f"User {username} has been set to rank {rank}.", ephemeral=False)
+        await ctx.reply(embed=embed_message("Rank", f"{username} har nu rank {rank}.", discord.Color.green()))
     else:
-        await interaction.response.send_message("Failed to set rank.", ephemeral=True)
+        await ctx.reply(embed=embed_message("Error", "Misslyckades att sätta rank."))
 
-@tree.command(name="memberinfo", description="Show Roblox user group info")
-@app_commands.describe(username="Roblox username")
-async def memberinfo(interaction: discord.Interaction, username: str):
-    if not has_allowed_role(interaction):
-        await interaction.response.send_message("Du har inte behörighet att använda detta kommando.", ephemeral=True)
+@bot.command()
+async def memberinfo(ctx, username: str):
+    if not has_allowed_role(ctx):
+        await ctx.reply(embed=embed_message("Error", "Du har inte behörighet."))
         return
     user_id = get_user_id(username)
     if not user_id:
-        await interaction.response.send_message("User not found.", ephemeral=True)
+        await ctx.reply(embed=embed_message("Error", "Användare hittades inte."))
         return
     role = get_user_role_in_group(user_id)
     if not role:
-        await interaction.response.send_message(f"{username} is not a member of the group.", ephemeral=True)
+        await ctx.reply(embed=embed_message("Info", f"{username} är inte medlem i gruppen."))
         return
-    await interaction.response.send_message(f"{username} has the role: {role['name']} (Rank {role['rank']}).", ephemeral=False)
+    await ctx.reply(embed=embed_message("Info", f"{username} har rollen {role['name']} (Rank {role['rank']})."))
 
 bot.loop.create_task(keep_alive())
 bot.run(TOKEN)
