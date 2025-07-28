@@ -255,7 +255,7 @@ async def key(ctx, key: str, username: str):
         set_key_used(key)
         await ctx.send(embed=embed_message("Success", f"{username} has been accepted into the group!", discord.Color.green()))
     else:
-        await ctx.send(embed=embed_message("Error", "Failed to accept the join request.", discord.Color.red()))
+        await ctx.send(embed=embed_message("Error", "Failed to accept group request.", discord.Color.red()))
 
 @bot.command()
 async def kick(ctx, username: str):
@@ -264,12 +264,12 @@ async def kick(ctx, username: str):
         return
     user_id = get_user_id(username)
     if not user_id:
-        await ctx.send(embed=embed_message("Error", "User not found.", discord.Color.red()))
+        await ctx.send(embed=embed_message("Error", "Roblox user not found.", discord.Color.red()))
         return
     if kick_from_group(user_id):
-        await ctx.send(embed=embed_message("Success", f"{username} has been kicked.", discord.Color.green()))
+        await ctx.send(embed=embed_message("Success", f"{username} har blivit kickad från gruppen.", discord.Color.green()))
     else:
-        await ctx.send(embed=embed_message("Error", "Failed to kick user.", discord.Color.red()))
+        await ctx.send(embed=embed_message("Error", "Det gick inte att kicka användaren.", discord.Color.red()))
 
 @bot.command()
 async def promote(ctx, username: str):
@@ -278,12 +278,12 @@ async def promote(ctx, username: str):
         return
     user_id = get_user_id(username)
     if not user_id:
-        await ctx.send(embed=embed_message("Error", "User not found.", discord.Color.red()))
+        await ctx.send(embed=embed_message("Error", "Roblox user not found.", discord.Color.red()))
         return
     if promote_in_group(user_id):
-        await ctx.send(embed=embed_message("Success", f"{username} has been promoted.", discord.Color.green()))
+        await ctx.send(embed=embed_message("Success", f"{username} har blivit uppgraderad.", discord.Color.green()))
     else:
-        await ctx.send(embed=embed_message("Error", "Failed to promote user.", discord.Color.red()))
+        await ctx.send(embed=embed_message("Error", "Det gick inte att uppgradera användaren.", discord.Color.red()))
 
 @bot.command()
 async def demote(ctx, username: str):
@@ -292,45 +292,60 @@ async def demote(ctx, username: str):
         return
     user_id = get_user_id(username)
     if not user_id:
-        await ctx.send(embed=embed_message("Error", "User not found.", discord.Color.red()))
+        await ctx.send(embed=embed_message("Error", "Roblox user not found.", discord.Color.red()))
         return
     if demote_in_group(user_id):
-        await ctx.send(embed=embed_message("Success", f"{username} has been demoted.", discord.Color.green()))
+        await ctx.send(embed=embed_message("Success", f"{username} har blivit nedgraderad.", discord.Color.green()))
     else:
-        await ctx.send(embed=embed_message("Error", "Failed to demote user.", discord.Color.red()))
-
-@bot.command()
-async def rank(ctx, username: str, rank: int):
-    if not has_allowed_role(ctx):
-        await ctx.send(embed=embed_message("Permission Denied", "Du har inte behörighet.", discord.Color.red()))
-        return
-    user_id = get_user_id(username)
-    if not user_id:
-        await ctx.send(embed=embed_message("Error", "User not found.", discord.Color.red()))
-        return
-    roles = get_group_roles()
-    for r in roles:
-        if r["rank"] == rank:
-            if set_user_role(user_id, r["id"]):
-                await ctx.send(embed=embed_message("Success", f"{username} has been set to rank {rank}.", discord.Color.green()))
-                return
-    await ctx.send(embed=embed_message("Error", "Rank not found.", discord.Color.red()))
+        await ctx.send(embed=embed_message("Error", "Det gick inte att nedgradera användaren.", discord.Color.red()))
 
 @bot.command()
 async def memberinfo(ctx, username: str):
     user_id = get_user_id(username)
     if not user_id:
-        await ctx.send(embed=embed_message("Error", "User not found.", discord.Color.red()))
+        await ctx.send(embed=embed_message("Error", "Roblox user not found.", discord.Color.red()))
         return
-    role = get_user_role_in_group(user_id)
-    rank = role["rank"] if role else "N/A"
-    role_name = role["name"] if role else "N/A"
-    embed = discord.Embed(title=f"Info för {username}", color=discord.Color.blue())
-    embed.add_field(name="Rank", value=rank, inline=True)
-    embed.add_field(name="Role", value=role_name, inline=True)
+    url = f"https://users.roblox.com/v1/users/{user_id}"
+    resp = requests.get(url)
+    if resp.status_code != 200:
+        await ctx.send(embed=embed_message("Error", "Failed to fetch user info.", discord.Color.red()))
+        return
+    data = resp.json()
+    name = data.get("name")
+    display_name = data.get("displayName")
+    description = data.get("description") or "Ingen beskrivning"
+    created = data.get("created")
+    embed = discord.Embed(title=f"Info för {name}", color=discord.Color.blue())
+    embed.add_field(name="Display Name", value=display_name, inline=True)
+    embed.add_field(name="Description", value=description, inline=False)
+    embed.add_field(name="Created", value=created, inline=True)
     await ctx.send(embed=embed)
 
-# ===== Main =====
-if __name__ == "__main__":
-    keep_alive()
-    bot.run(TOKEN)
+# *** Här är det ändrade rank-kommandot ***
+
+@bot.command()
+async def rank(ctx, username: str, *, rank_name: str):
+    if not has_allowed_role(ctx):
+        await ctx.send(embed=embed_message("Permission Denied", "Du har inte behörighet.", discord.Color.red()))
+        return
+    user_id = get_user_id(username)
+    if not user_id:
+        await ctx.send(embed=embed_message("Error", "Roblox user not found.", discord.Color.red()))
+        return
+    roles = get_group_roles()
+    # Sök efter rollen med namn (case insensitive)
+    for role in roles:
+        if role["name"].lower() == rank_name.lower():
+            if set_user_role(user_id, role["id"]):
+                await ctx.send(embed=embed_message("Success", f"{username} har nu rollen '{rank_name}'.", discord.Color.green()))
+                return
+            else:
+                await ctx.send(embed=embed_message("Error", "Kunde inte sätta rollen.", discord.Color.red()))
+                return
+    await ctx.send(embed=embed_message("Error", f"Rank '{rank_name}' hittades inte.", discord.Color.red()))
+
+# ===== Starta Flask keep-alive =====
+keep_alive()
+
+# ===== Starta Discord bot =====
+bot.run(TOKEN)
